@@ -126,6 +126,58 @@ def detect_next_pieces(piece_area, num_pieces=5):
     
     return detected_pieces
 
+def detect_next_pieces_optimized(next_coords, piece_pixel_offsets):
+    """
+    Detect next pieces by checking specific pixel coordinates
+    
+    Args:
+        next_coords: (x, y, width, height) of the found "next" text
+        piece_pixel_offsets: List of (x_offset, y_offset) for each piece position
+    
+    Returns:
+        List of detected pieces
+    """
+    if not next_coords:
+        return []
+    
+    text_x, text_y, text_width, text_height = next_coords
+    
+    tetris_colors = {
+        'I': (49, 178, 130),
+        'O': (179, 153, 49),
+        'T': (207, 60, 193),
+        'S': (131, 179, 50),
+        'Z': (179, 52, 59),
+        'J': (78, 61, 164),
+        'L': (180, 99, 50)
+    }
+    
+    detected_pieces = []
+    
+    for i, (x_offset, y_offset) in enumerate(piece_pixel_offsets):
+        # Calculate absolute pixel position
+        pixel_x = text_x + x_offset
+        pixel_y = text_y + text_height + y_offset
+        
+        # Capture just this one pixel
+        screenshot = ImageGrab.grab(bbox=(pixel_x, pixel_y, pixel_x + 1, pixel_y + 1))
+        pixel_color = screenshot.getpixel((0, 0))
+        
+        # Convert to tuple if needed
+        if isinstance(pixel_color, tuple):
+            color = pixel_color
+        else:
+            color = (pixel_color, pixel_color, pixel_color)  # Handle grayscale
+        
+        # Identify piece by color
+        if not is_black_or_dark(color):
+            detected_piece = identify_piece_by_color(color, tetris_colors)
+            detected_pieces.append(detected_piece)
+        else:
+            detected_pieces.append(None)
+    
+    return detected_pieces
+
 def detect_current_piece(next_coords, current_piece_offset):
     """Detect the current piece"""
     if not next_coords:
@@ -190,19 +242,58 @@ def get_game_pieces(search_area, template_path, piece_offset, current_piece_offs
     
     return current_piece, next_pieces
 
+def get_game_pieces_optimized(search_area, template_path, piece_pixel_offsets, current_piece_offset):
+    """
+    Get current piece and next 5 pieces using optimized pixel checking
+    
+    Args:
+        search_area: Area to search for "next" text
+        template_path: Path to next template image
+        piece_pixel_offsets: List of 5 (x_offset, y_offset) tuples for piece positions
+        current_piece_offset: (x_offset, y_offset, width, height) for current piece
+    """
+    next_coords = find_next_by_template_matching(search_area, template_path, threshold=0.7)
+    
+    if not next_coords:
+        return None, []
+    
+    # Get current piece
+    current_piece = detect_current_piece(next_coords, current_piece_offset)
+    
+    # Get next pieces using optimized method
+    next_pieces = detect_next_pieces_optimized(next_coords, piece_pixel_offsets)
+    
+    return current_piece, next_pieces
+
 if __name__ == "__main__":
     # Configuration
     SEARCH_AREA = (0, 0, 1920, 1080)
     TEMPLATE_PATH = "assets/next_template.png"
-    PIECE_OFFSET = (50, 56, 1, 455)
     CURRENT_PIECE_OFFSET = (-225, -60, 1, 1)
     
-    print("=== TETRIS BOT - PIECE DETECTION ===")
+    # Define exact pixel offsets from "next" text for each of the 5 pieces
+    # Adjust these coordinates to point to the center of each piece preview
+    PIECE_PIXEL_OFFSETS = [
+        (104, 60),   # Piece 1 offset from "next" text
+        (104, 165),  # Piece 2 offset from "next" text  
+        (104, 270),  # Piece 3 offset from "next" text
+        (104, 375),  # Piece 4 offset from "next" text
+        (104, 480)   # Piece 5 offset from "next" text
+    ]   
+    
+    print("=== TETRIS BOT - OPTIMIZED PIECE DETECTION ===")
+    
+    # Start timing
+    start_time = time.perf_counter()
     
     # Get current and next pieces
-    current_piece, next_pieces = get_game_pieces(
-        SEARCH_AREA, TEMPLATE_PATH, PIECE_OFFSET, CURRENT_PIECE_OFFSET
+    current_piece, next_pieces = get_game_pieces_optimized(
+        SEARCH_AREA, TEMPLATE_PATH, PIECE_PIXEL_OFFSETS, CURRENT_PIECE_OFFSET
     )
+    
+    # End timing
+    end_time = time.perf_counter()
+    detection_time = (end_time - start_time) * 1000  # Convert to milliseconds
     
     # Display results
     print(f"\nCurrent piece: {current_piece if current_piece else 'Not detected'}")
@@ -210,3 +301,5 @@ if __name__ == "__main__":
     print(f"\nNext pieces:")
     for i, piece in enumerate(next_pieces[:5], 1):
         print(f"  {i}: {piece if piece else 'Not detected'}")
+    
+    print(f"\n  Detection completed in {detection_time:.1f}ms")
