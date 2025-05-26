@@ -4,6 +4,15 @@ import time
 import cv2
 import numpy as np
 
+# Add this import at the top after building the Rust module
+try:
+    import tetris_bot_rust
+    USE_RUST = True
+    print("Rust module available, using Rust implementation for piece identification")
+except ImportError:
+    USE_RUST = False
+    print("Rust module not available, using Python implementation")
+
 def find_next_by_template_matching(search_area, template_path, threshold=0.8):
     """Find the "next" text using template matching"""
     x, y, width, height = search_area
@@ -63,7 +72,7 @@ def find_next_optimized(search_area, template_path, threshold=0.7):
         return None
 
 def identify_piece_by_color_fast(pixel_color, tetris_colors):
-    """Fast piece identification"""
+    """Fast piece identification (Python only)"""
     if hasattr(pixel_color[0], 'item'):
         pixel_color = tuple(int(c.item()) for c in pixel_color)
     else:
@@ -73,7 +82,6 @@ def identify_piece_by_color_fast(pixel_color, tetris_colors):
     min_distance = float('inf')
     
     for piece_name, piece_color in tetris_colors.items():
-        # Calculate distance using sum of squared differences (no sqrt needed)
         distance = sum((a - b) ** 2 for a, b in zip(pixel_color, piece_color))
         
         if distance < min_distance:
@@ -153,22 +161,40 @@ if __name__ == "__main__":
         (104, 60), (104, 165), (104, 270), (104, 375), (104, 480)
     ]   
     
-    print("=== TETRIS BOT - ULTRA-OPTIMIZED DETECTION ===")
+    print("=== TETRIS BOT - WITH RUST GAME LOGIC ===")
     
-    print("\n  Timing breakdown:")
-    start_time = time.perf_counter()
-    
-    # Get all pieces with optimized method
+    # Detect pieces (Python)
     current_piece, next_pieces = get_game_pieces_ultra_optimized(
         SEARCH_AREA, TEMPLATE_PATH, PIECE_PIXEL_OFFSETS, CURRENT_PIECE_OFFSET
     )
     
-    total_time = (time.perf_counter() - start_time) * 1000
-    print(f"  Total detection time: {total_time:.1f}ms")
-    
-    # Display results
     print(f"\n  Detection results:")
     print(f"  Current piece: {current_piece if current_piece else 'Not detected'}")
     print(f"  Next pieces:")
     for i, piece in enumerate(next_pieces[:5], 1):
         print(f"    {i}: {piece if piece else 'Not detected'}")
+    
+    # Send to Rust for game logic
+    if USE_RUST:
+        try:
+            # Calculate best move using Rust
+            best_move = tetris_bot_rust.calculate_best_move(
+                current_piece, 
+                next_pieces, 
+                None  # board_state - we'll add this later
+            )
+            
+            # Get strategy analysis
+            strategy = tetris_bot_rust.analyze_game_state(current_piece, next_pieces)
+            
+            print(f"\n Rust game logic:")
+            print(f"  Best move: {best_move}")
+            print(f"  Strategy analysis:")
+            for line in strategy:
+                print(f"    {line}")
+                
+        except Exception as e:
+            print(f"  Error calling Rust: {e}")
+    else:
+        print("\n  Python fallback:")
+        print(f"  Would calculate move for: {current_piece}")

@@ -3,3 +3,4 @@ pillow
 pytesseract
 opencv-python
 numpy
+maturin
