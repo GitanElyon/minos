@@ -7,7 +7,7 @@ const BOARD_HEIGHT: usize = 20;
 #[pyclass]
 pub struct TetrisBoard {
     #[pyo3(get, set)]
-    pub grid: Vec<Vec<i32>>, // 0 = empty, 1-7 = piece types
+    pub grid: Vec<Vec<i32>>,
     #[pyo3(get, set)]
     pub current_piece: Option<String>,
     #[pyo3(get, set)]
@@ -95,7 +95,6 @@ impl TetrisBoard {
                 y -= 1;
             }
         }
-        
         lines_cleared
     }
     
@@ -105,7 +104,6 @@ impl TetrisBoard {
     
     fn get_drop_position(&self, piece: &str, x: i32, rotation: u8) -> i32 {
         let mut drop_y = 0;
-        
         for y in 0..BOARD_HEIGHT as i32 {
             if self.is_valid_position(piece, x, y, rotation) {
                 drop_y = y;
@@ -113,25 +111,7 @@ impl TetrisBoard {
                 break;
             }
         }
-        
         drop_y
-    }
-
-    fn print_board_simple(&self) {
-        println!("Current board:");
-        for y in 0..BOARD_HEIGHT {
-            print!("  ");
-            for x in 0..BOARD_WIDTH {
-                let cell = self.grid[y][x];
-                if cell == 0 {
-                    print!(".");
-                } else {
-                    print!("#");
-                }
-            }
-            println!();
-        }
-        println!();
     }
 }
 
@@ -215,13 +195,7 @@ fn get_piece_shape(piece: &str, rotation: u8) -> Vec<Vec<i32>> {
 
 fn get_piece_id(piece: &str) -> i32 {
     match piece {
-        "I" => 1,
-        "O" => 2,
-        "T" => 3,
-        "S" => 4,
-        "Z" => 5,
-        "J" => 6,
-        "L" => 7,
+        "I" => 1, "O" => 2, "T" => 3, "S" => 4, "Z" => 5, "J" => 6, "L" => 7,
         _ => 1,
     }
 }
@@ -234,22 +208,37 @@ fn get_spawn_position(piece: &str) -> (i32, i32) {
     }
 }
 
-// Evaluation functions
-fn evaluate_board(board: &TetrisBoard) -> f64 {
-    let line_clear_weight = 760.666;
-    let hole_weight = -35.0;
-    let bumpiness_weight = -18.0;
-    let height_weight = -51.0;
+// T-spin detection
+fn detect_tspin(board: &TetrisBoard, x: i32, y: i32, rotation: u8) -> bool {
+    let mut corners_filled = 0;
+    let center_x = x + 1;
+    let center_y = y + 1;
     
+    let corners = [(-1, -1), (1, -1), (-1, 1), (1, 1)];
+    
+    for (dx, dy) in corners.iter() {
+        let check_x = center_x + dx;
+        let check_y = center_y + dy;
+        
+        if check_x < 0 || check_x >= BOARD_WIDTH as i32 || 
+           check_y < 0 || check_y >= BOARD_HEIGHT as i32 {
+            corners_filled += 1;
+        } else if board.grid[check_y as usize][check_x as usize] != 0 {
+            corners_filled += 1;
+        }
+    }
+    
+    corners_filled >= 3
+}
+
+// Board evaluation
+fn evaluate_board(board: &TetrisBoard) -> f64 {
     let lines_cleared = count_complete_lines(board) as f64;
     let holes = count_holes(board) as f64;
     let bumpiness = get_bumpiness(board) as f64;
-    let aggregate_height = get_aggregate_height(board) as f64;
+    let height = get_aggregate_height(board) as f64;
     
-    lines_cleared * line_clear_weight +
-    holes * hole_weight +
-    bumpiness * bumpiness_weight +
-    aggregate_height * height_weight
+    lines_cleared * 750.0 - holes * 350.0 - bumpiness * 180.0 - height * 510.0
 }
 
 fn get_column_heights(board: &TetrisBoard) -> Vec<u32> {
@@ -263,7 +252,6 @@ fn get_column_heights(board: &TetrisBoard) -> Vec<u32> {
             }
         }
     }
-    
     heights
 }
 
@@ -284,7 +272,6 @@ fn count_holes(board: &TetrisBoard) -> u32 {
             }
         }
     }
-    
     holes
 }
 
@@ -295,7 +282,6 @@ fn get_bumpiness(board: &TetrisBoard) -> u32 {
     for i in 0..BOARD_WIDTH - 1 {
         bumpiness += (heights[i] as i32 - heights[i + 1] as i32).abs() as u32;
     }
-    
     bumpiness
 }
 
@@ -307,81 +293,13 @@ fn count_complete_lines(board: &TetrisBoard) -> u32 {
             complete_lines += 1;
         }
     }
-    
     complete_lines
 }
 
-// Global board state
-static mut GAME_BOARD: Option<TetrisBoard> = None;
-
-// Python functions
-#[pyfunction]
-fn initialize_game_board() -> PyResult<()> {
-    unsafe {
-        GAME_BOARD = Some(TetrisBoard::new());
-    }
-    Ok(())
-}
-
-#[pyfunction]
-fn update_game_pieces(
-    current: Option<String>, 
-    held: Option<String>, 
-    next: Vec<Option<String>>
-) -> PyResult<()> {
-    unsafe {
-        if let Some(board) = &mut GAME_BOARD {
-            board.update_pieces(current, held, next);
-        }
-    }
-    Ok(())
-}
-
-#[pyfunction]
-fn calculate_best_move_persistent(
-    piece: Option<String>,
-) -> PyResult<Option<Move>> {
-    if let Some(piece_type) = piece {
-        unsafe {
-            if let Some(board) = &mut GAME_BOARD {
-                let mut best_move = None;
-                let mut best_score = f64::NEG_INFINITY;
-                
-                for rotation in 0..4 {
-                    for x in 0..BOARD_WIDTH as i32 {
-                        if board.is_valid_position(&piece_type, x, 0, rotation) {
-                            let y = board.get_drop_position(&piece_type, x, rotation);
-                            
-                            let mut test_board = board.clone();
-                            if test_board.place_piece(&piece_type, x, y, rotation) {
-                                let score = evaluate_board(&test_board);
-                                
-                                if score > best_score {
-                                    best_score = score;
-                                    best_move = Some(Move::new(piece_type.clone(), x, y, rotation, score));
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                return Ok(best_move);
-            }
-        }
-    }
-    
-    Ok(None)
-}
-
-#[pyfunction]
-fn calculate_input_commands(
-    piece: &str,
-    target_move: &Move
-) -> PyResult<Vec<InputCommand>> {
+// Input calculation
+fn calculate_input_commands(piece: &str, target_move: &Move) -> PyResult<Vec<InputCommand>> {
     let mut commands = Vec::new();
     let (spawn_x, _) = get_spawn_position(piece);
-    
-    println!("Original spawn: x={}, target: x={}, rotation={}", spawn_x, target_move.x, target_move.rotation);
     
     // Handle rotations first
     let rotation = target_move.rotation % 4;
@@ -392,15 +310,9 @@ fn calculate_input_commands(
         commands.push(InputCommand::new("rotate_cw".to_string(), rotation as i32));
     }
     
-    // Calculate where the piece actually ends up after rotation
-    let actual_position_after_rotation = get_actual_position_after_rotation(piece, spawn_x, rotation);
-    
-    println!("After rotation, piece is actually at x={}", actual_position_after_rotation);
-    
-    // Handle movement from actual position to target
-    let moves_needed = target_move.x - actual_position_after_rotation;
-    
-    println!("Need to move {} positions to reach target x={}", moves_needed, target_move.x);
+    // Calculate movement after rotation
+    let actual_position = get_actual_position_after_rotation(piece, spawn_x, rotation);
+    let moves_needed = target_move.x - actual_position;
     
     if moves_needed > 0 {
         commands.push(InputCommand::new("right".to_string(), moves_needed));
@@ -408,120 +320,139 @@ fn calculate_input_commands(
         commands.push(InputCommand::new("left".to_string(), -moves_needed));
     }
     
-    // Drop
     commands.push(InputCommand::new("drop".to_string(), 1));
-    
     Ok(commands)
 }
 
-// Add this helper function
 fn get_actual_position_after_rotation(piece: &str, spawn_x: i32, rotation: u8) -> i32 {
-    let result = match piece {
-        "I" => {
-            match rotation % 2 {
-                0 => spawn_x,      // Horizontal I-piece stays at spawn
-                _ => spawn_x + 2,  // Vertical I-piece shifts right by 2
-            }
+    match piece {
+        "I" => match rotation % 2 {
+            0 => spawn_x,
+            _ => spawn_x + 2,
         },
-        "S" | "Z" => {
-            match rotation % 2 {
-                0 => spawn_x,      // Horizontal S/Z pieces (3 wide)
-                _ => spawn_x + 1,  // Vertical S/Z pieces (2 wide) - shift right by 1
-            }
+        "S" | "Z" => match rotation % 2 {
+            0 => spawn_x,
+            _ => spawn_x + 1,
         },
-        "T" => {
-            match rotation % 4 {
-                0 => spawn_x,      // Original T orientation (3 wide)
-                1 => spawn_x + 1,  // T rotated 90° right (2 wide) - shift right by 1
-                2 => spawn_x,      // T upside down (3 wide) - same as original
-                3 => spawn_x,      // T rotated 270° right (2 wide) - peninsula on left, no shift
-                _ => spawn_x,
-            }
+        "T" => match rotation % 4 {
+            0 => spawn_x,
+            1 => spawn_x + 1,
+            2 => spawn_x,
+            3 => spawn_x,
+            _ => spawn_x,
         },
-        "J" => {
-            match rotation % 4 {
-                0 => spawn_x,      // Original J orientation
-                1 => spawn_x + 1,  // J rotated 90° right
-                2 => spawn_x,      // J upside down
-                3 => spawn_x,      // J rotated 270° right - peninsula affects position
-                _ => spawn_x,
-            }
+        "J" => match rotation % 4 {
+            0 => spawn_x,
+            1 => spawn_x + 1,
+            2 => spawn_x,
+            3 => spawn_x,
+            _ => spawn_x,
         },
-        "L" => {
-            match rotation % 4 {
-                0 => spawn_x,      // Original L orientation
-                1 => spawn_x + 1,  // L rotated 90° right - try +1 instead of 0
-                2 => spawn_x,      // L upside down
-                3 => spawn_x,  // L rotated 270° right - peninsula on right
-                _ => spawn_x,
-            }
+        "L" => match rotation % 4 {
+            0 => spawn_x,
+            1 => spawn_x + 1,
+            2 => spawn_x,
+            3 => spawn_x,
+            _ => spawn_x,
         },
-        "O" => spawn_x,  // O-piece doesn't shift when rotated
         _ => spawn_x,
-    };
-    
-    // Debug output
-    if piece == "L" || piece == "J" || piece == "T" {
-        println!("DEBUG: {} rotation {} - spawn_x: {} -> actual_x: {}", 
-                 piece, rotation, spawn_x, result);
     }
-    
-    result
+}
+
+// Global game state
+static mut GAME_BOARD: Option<TetrisBoard> = None;
+
+// Core functions
+#[pyfunction]
+fn initialize_game_board() -> PyResult<()> {
+    unsafe {
+        GAME_BOARD = Some(TetrisBoard::new());
+    }
+    Ok(())
 }
 
 #[pyfunction]
-fn get_optimal_move_with_inputs(
-    piece: Option<String>,
-) -> PyResult<Option<(Move, Vec<InputCommand>)>> {
-    if let Some(piece_type) = piece {
-        if let Some(best_move) = calculate_best_move_persistent(Some(piece_type.clone()))? {
-            let commands = calculate_input_commands(&piece_type, &best_move)?;
-            return Ok(Some((best_move, commands)));
+fn update_game_pieces(current: Option<String>, held: Option<String>, next: Vec<Option<String>>) -> PyResult<()> {
+    unsafe {
+        if let Some(board) = &mut GAME_BOARD {
+            board.update_pieces(current, held, next);
         }
     }
-    
-    Ok(None)
+    Ok(())
 }
 
 #[pyfunction]
-fn get_optimal_move_with_inputs_debug(
-    piece: Option<String>,
-) -> PyResult<Option<(Move, Vec<InputCommand>)>> {
-    if let Some(piece_type) = piece {
-        println!("=== MOVE CALCULATION DEBUG ===");
-        println!("Detected piece: {}", piece_type);
-        
-        // Show current board state
-        unsafe {
-            if let Some(board) = &GAME_BOARD {
-                board.print_board_simple();
+fn get_optimal_move_with_lookahead_and_tspin(current_piece: String) -> PyResult<Option<(Move, Vec<InputCommand>)>> {
+    unsafe {
+        if let Some(board) = &GAME_BOARD {
+            let next_piece = if !board.next_pieces.is_empty() {
+                board.next_pieces.get(0).and_then(|p| p.as_ref())
+            } else {
+                None
+            };
+            
+            let mut best_move: Option<Move> = None;
+            let mut best_score = f64::NEG_INFINITY;
+            
+            for rotation in 0..4 {
+                for x in 0..BOARD_WIDTH as i32 {
+                    if board.is_valid_position(&current_piece, x, 0, rotation) {
+                        let y = board.get_drop_position(&current_piece, x, rotation);
+                        
+                        let mut board_after_current = board.clone();
+                        if board_after_current.place_piece(&current_piece, x, y, rotation) {
+                            let mut score = evaluate_board(&board_after_current);
+                            
+                            // T-spin bonus
+                            if current_piece == "T" && detect_tspin(&board_after_current, x, y, rotation) {
+                                score += 5000.0;
+                                println!("T-SPIN at x={}, rotation={}", x, rotation);
+                            }
+                            
+                            // 2-piece lookahead
+                            if let Some(next_piece_str) = next_piece {
+                                let mut best_next_score = f64::NEG_INFINITY;
+                                
+                                for next_rotation in 0..4 {
+                                    for next_x in 0..BOARD_WIDTH as i32 {
+                                        if board_after_current.is_valid_position(next_piece_str, next_x, 0, next_rotation) {
+                                            let next_y = board_after_current.get_drop_position(next_piece_str, next_x, next_rotation);
+                                            
+                                            let mut board_after_both = board_after_current.clone();
+                                            if board_after_both.place_piece(next_piece_str, next_x, next_y, next_rotation) {
+                                                let next_score = evaluate_board(&board_after_both);
+                                                if next_score > best_next_score {
+                                                    best_next_score = next_score;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                score = best_next_score;
+                            }
+                            
+                            if score > best_score {
+                                best_score = score;
+                                best_move = Some(Move {
+                                    piece: current_piece.clone(),
+                                    x,
+                                    y,
+                                    rotation,
+                                    score,
+                                });
+                            }
+                        }
+                    }
+                }
             }
-        }
-        
-        // Calculate best move
-        if let Some(best_move) = calculate_best_move_persistent(Some(piece_type.clone()))? {
-            println!("AI Decision:");
-            println!("  Place {} at x={}, rotation={}", 
-                     best_move.piece, best_move.x, best_move.rotation);
-            println!("  Score: {:.1}", best_move.score);
             
-            // Calculate commands
-            let commands = calculate_input_commands(&piece_type, &best_move)?;
-            
-            println!("Input commands:");
-            for (i, cmd) in commands.iter().enumerate() {
-                println!("  {}: {} x{}", i+1, cmd.action, cmd.count);
+            if let Some(best_move) = best_move {
+                let commands = calculate_input_commands(&current_piece, &best_move)?;
+                return Ok(Some((best_move, commands)));
             }
-            
-            println!("=== END DEBUG ===\n");
-            
-            return Ok(Some((best_move, commands)));
-        } else {
-            println!("No valid moves found!");
-            println!("=== END DEBUG ===\n");
         }
     }
-    
     Ok(None)
 }
 
@@ -532,124 +463,39 @@ fn execute_move_on_board(mv: &Move) -> PyResult<bool> {
             return Ok(board.place_piece(&mv.piece, mv.x, mv.y, mv.rotation));
         }
     }
-    
     Ok(false)
 }
 
-#[pyfunction]
-fn reset_game_board() -> PyResult<()> {
-    unsafe {
-        GAME_BOARD = Some(TetrisBoard::new());
-    }
-    Ok(())
-}
-
-// Add a new function to get the next piece from the queue
-#[pyfunction]
-fn get_next_piece_from_queue() -> PyResult<Option<String>> {
-    unsafe {
-        if let Some(board) = &mut GAME_BOARD {
-            if !board.next_pieces.is_empty() {
-                // Get the first piece from the queue and remove it
-                if let Some(Some(piece)) = board.next_pieces.get(0) {
-                    let next_piece = piece.clone();
-                    board.next_pieces.remove(0);
-                    return Ok(Some(next_piece));
-                }
-            }
-        }
-    }
-    Ok(None)
-}
-
-// Add function to check if we have pieces in queue
-#[pyfunction]
-fn has_pieces_in_queue() -> PyResult<bool> {
-    unsafe {
-        if let Some(board) = &GAME_BOARD {
-            return Ok(!board.next_pieces.is_empty());
-        }
-    }
-    Ok(false)
-}
-
-// Modify advance_piece_queue to include debug output
 #[pyfunction]
 fn advance_piece_queue() -> PyResult<Option<String>> {
     unsafe {
         if let Some(board) = &mut GAME_BOARD {
-            println!("--- ADVANCING QUEUE ---");
-            println!("Queue before advance: {:?}", board.next_pieces);
-            
             if !board.next_pieces.is_empty() {
-                // Remove first piece from queue (this becomes current piece)
-                let current_piece = board.next_pieces.remove(0);
-                println!("Removed piece from queue: {:?}", current_piece);
-                println!("Queue after advance: {:?}", board.next_pieces);
-                println!("Queue length now: {}", board.next_pieces.len());
-                return Ok(current_piece);
-            } else {
-                println!("Queue is empty!");
+                return Ok(board.next_pieces.remove(0));
             }
         }
     }
     Ok(None)
 }
 
-// Modify add_piece_to_queue to include debug output
 #[pyfunction]
 fn add_piece_to_queue(piece: Option<String>) -> PyResult<()> {
     unsafe {
         if let Some(board) = &mut GAME_BOARD {
-            println!("--- ADDING TO QUEUE ---");
-            println!("Adding piece: {:?}", piece);
-            println!("Queue before add: {:?}", board.next_pieces);
-            
             board.next_pieces.push(piece);
-            
-            println!("Queue after add: {:?}", board.next_pieces);
-            println!("Queue length now: {}", board.next_pieces.len());
         }
     }
     Ok(())
 }
 
-// Add debug function to print current game state
-#[pyfunction]
-fn print_game_state() -> PyResult<()> {
-    unsafe {
-        if let Some(board) = &GAME_BOARD {
-            println!("=== GAME STATE DEBUG ===");
-            println!("Current piece: {:?}", board.current_piece);
-            println!("Held piece: {:?}", board.held_piece);
-            println!("Queue length: {}", board.next_pieces.len());
-            println!("Queue contents:");
-            for (i, piece) in board.next_pieces.iter().enumerate() {
-                println!("  [{}]: {:?}", i, piece);
-            }
-            println!("========================");
-        } else {
-            println!("No game board initialized!");
-        }
-    }
-    Ok(())
-}
-
-// Update the module to include new functions
 #[pymodule]
 fn tetris_bot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(initialize_game_board, m)?)?;
     m.add_function(wrap_pyfunction!(update_game_pieces, m)?)?;
-    m.add_function(wrap_pyfunction!(calculate_best_move_persistent, m)?)?;
-    m.add_function(wrap_pyfunction!(get_optimal_move_with_inputs, m)?)?;
-    m.add_function(wrap_pyfunction!(get_optimal_move_with_inputs_debug, m)?)?;
+    m.add_function(wrap_pyfunction!(get_optimal_move_with_lookahead_and_tspin, m)?)?;
     m.add_function(wrap_pyfunction!(execute_move_on_board, m)?)?;
-    m.add_function(wrap_pyfunction!(reset_game_board, m)?)?;
-    m.add_function(wrap_pyfunction!(get_next_piece_from_queue, m)?)?;
-    m.add_function(wrap_pyfunction!(has_pieces_in_queue, m)?)?;
     m.add_function(wrap_pyfunction!(advance_piece_queue, m)?)?;
     m.add_function(wrap_pyfunction!(add_piece_to_queue, m)?)?;
-    m.add_function(wrap_pyfunction!(print_game_state, m)?)?;              // Add this
     
     m.add_class::<TetrisBoard>()?;
     m.add_class::<Move>()?;

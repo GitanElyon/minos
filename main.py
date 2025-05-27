@@ -297,9 +297,6 @@ def main_game_loop():
         # Initialize the game board with all detected pieces
         tetris_bot_rust.update_game_pieces(current_piece, None, next_pieces)
         
-        # Print initial state
-        tetris_bot_rust.print_game_state()
-        
         print("Starting game loop...")
         moves_executed = 0
         current_playing_piece = current_piece
@@ -310,8 +307,8 @@ def main_game_loop():
                     print(f"\n=== MOVE {moves_executed + 1} ===")
                     print(f"Playing piece: {current_playing_piece}")
                     
-                    # Get optimal move
-                    result = tetris_bot_rust.get_optimal_move_with_inputs_debug(current_playing_piece)
+                    # Get optimal move with lookahead and T-spin detection
+                    result = tetris_bot_rust.get_optimal_move_with_lookahead_and_tspin(current_playing_piece)
                     
                     if result:
                         best_move, commands = result
@@ -337,10 +334,7 @@ def main_game_loop():
                                 print("Warning: Could not detect new piece for queue")
                                 tetris_bot_rust.add_piece_to_queue(None)  # Add None to maintain queue length
                             
-                            # Print state after all operations
-                            tetris_bot_rust.print_game_state()
-                            
-                            time.sleep(0.5)
+                            time.sleep(0.1)
                 else:
                     print("No current piece available!")
                     break
