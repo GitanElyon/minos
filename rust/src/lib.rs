@@ -208,29 +208,6 @@ fn get_spawn_position(piece: &str) -> (i32, i32) {
     }
 }
 
-// T-spin detection
-fn detect_tspin(board: &TetrisBoard, x: i32, y: i32, rotation: u8) -> bool {
-    let mut corners_filled = 0;
-    let center_x = x + 1;
-    let center_y = y + 1;
-    
-    let corners = [(-1, -1), (1, -1), (-1, 1), (1, 1)];
-    
-    for (dx, dy) in corners.iter() {
-        let check_x = center_x + dx;
-        let check_y = center_y + dy;
-        
-        if check_x < 0 || check_x >= BOARD_WIDTH as i32 || 
-           check_y < 0 || check_y >= BOARD_HEIGHT as i32 {
-            corners_filled += 1;
-        } else if board.grid[check_y as usize][check_x as usize] != 0 {
-            corners_filled += 1;
-        }
-    }
-    
-    corners_filled >= 3
-}
-
 // Board evaluation
 fn evaluate_board(board: &TetrisBoard) -> f64 {
     let lines_cleared = count_complete_lines(board) as f64;
@@ -297,17 +274,31 @@ fn count_complete_lines(board: &TetrisBoard) -> u32 {
 }
 
 // Input calculation
+// Update the calculate_input_commands function with optimized rotations
 fn calculate_input_commands(piece: &str, target_move: &Move) -> PyResult<Vec<InputCommand>> {
     let mut commands = Vec::new();
     let (spawn_x, _) = get_spawn_position(piece);
     
-    // Handle rotations first
+    // Handle rotations with optimization
     let rotation = target_move.rotation % 4;
     
-    if rotation == 2 {
-        commands.push(InputCommand::new("rotate_180".to_string(), 1));
-    } else if rotation > 0 {
-        commands.push(InputCommand::new("rotate_cw".to_string(), rotation as i32));
+    match rotation {
+        0 => {
+            // No rotation needed
+        },
+        1 => {
+            // 1 rotation clockwise
+            commands.push(InputCommand::new("rotate_cw".to_string(), 1));
+        },
+        2 => {
+            // 2 rotations - use 180 flip if available, otherwise 2 clockwise
+            commands.push(InputCommand::new("rotate_180".to_string(), 1));
+        },
+        3 => {
+            // 3 rotations clockwise = 1 rotation counter-clockwise
+            commands.push(InputCommand::new("rotate_ccw".to_string(), 1));
+        },
+        _ => {}
     }
     
     // Calculate movement after rotation
@@ -382,7 +373,7 @@ fn update_game_pieces(current: Option<String>, held: Option<String>, next: Vec<O
 }
 
 #[pyfunction]
-fn get_optimal_move_with_lookahead_and_tspin(current_piece: String) -> PyResult<Option<(Move, Vec<InputCommand>)>> {
+fn get_optimal_move_with_lookahead(current_piece: String) -> PyResult<Option<(Move, Vec<InputCommand>)>> {
     unsafe {
         if let Some(board) = &GAME_BOARD {
             let next_piece = if !board.next_pieces.is_empty() {
@@ -402,12 +393,6 @@ fn get_optimal_move_with_lookahead_and_tspin(current_piece: String) -> PyResult<
                         let mut board_after_current = board.clone();
                         if board_after_current.place_piece(&current_piece, x, y, rotation) {
                             let mut score = evaluate_board(&board_after_current);
-                            
-                            // T-spin bonus
-                            if current_piece == "T" && detect_tspin(&board_after_current, x, y, rotation) {
-                                score += 5000.0;
-                                println!("T-SPIN at x={}, rotation={}", x, rotation);
-                            }
                             
                             // 2-piece lookahead
                             if let Some(next_piece_str) = next_piece {
@@ -492,7 +477,7 @@ fn add_piece_to_queue(piece: Option<String>) -> PyResult<()> {
 fn tetris_bot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(initialize_game_board, m)?)?;
     m.add_function(wrap_pyfunction!(update_game_pieces, m)?)?;
-    m.add_function(wrap_pyfunction!(get_optimal_move_with_lookahead_and_tspin, m)?)?;
+    m.add_function(wrap_pyfunction!(get_optimal_move_with_lookahead, m)?)?;  // Updated name
     m.add_function(wrap_pyfunction!(execute_move_on_board, m)?)?;
     m.add_function(wrap_pyfunction!(advance_piece_queue, m)?)?;
     m.add_function(wrap_pyfunction!(add_piece_to_queue, m)?)?;

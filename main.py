@@ -304,11 +304,10 @@ def main_game_loop():
         while True:
             try:
                 if current_playing_piece:
-                    print(f"\n=== MOVE {moves_executed + 1} ===")
                     print(f"Playing piece: {current_playing_piece}")
                     
-                    # Get optimal move with lookahead and T-spin detection
-                    result = tetris_bot_rust.get_optimal_move_with_lookahead_and_tspin(current_playing_piece)
+                    # Get optimal move
+                    result = tetris_bot_rust.get_optimal_move_with_lookahead(current_playing_piece)
                     
                     if result:
                         best_move, commands = result
@@ -332,7 +331,6 @@ def main_game_loop():
                                 print(f"Added new piece to queue: {new_piece}")
                             else:
                                 print("Warning: Could not detect new piece for queue")
-                                tetris_bot_rust.add_piece_to_queue(None)  # Add None to maintain queue length
                             
                             time.sleep(0.1)
                 else:
