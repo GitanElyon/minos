@@ -582,17 +582,18 @@ fn reset_game_board() -> PyResult<()> {
 
 // Update these functions in your lib.rs
 
-/// Get the standard spawn position for each piece type
+/// Get the standard spawn position for each piece type (CORRECTED)
 fn get_spawn_position(piece: &str) -> (i32, i32) {
+    // Standard Tetris spawn positions (center of board)
     match piece {
-        "I" => (3, 0),  // I-piece spawns slightly left of center
-        "O" => (4, 0),  // O-piece spawns at center
-        "T" => (3, 0),  // T-piece spawns with center at column 4
-        "S" => (3, 0),  // S-piece spawns with center at column 4  
-        "Z" => (3, 0),  // Z-piece spawns with center at column 4
-        "J" => (3, 0),  // J-piece spawns with center at column 4
-        "L" => (3, 0),  // L-piece spawns with center at column 4
-        _ => (4, 0),    // Default center spawn
+        "I" => (3, 0),  // I-piece: 4 blocks wide, spawn at 3 so it occupies 3,4,5,6
+        "O" => (4, 0),  // O-piece: 2x2, spawn at 4 so it occupies 4,5
+        "T" => (3, 0),  // T-piece: 3 wide, spawn at 3 so center is at 4
+        "S" => (3, 0),  // S-piece: 3 wide, spawn at 3 so center is at 4
+        "Z" => (3, 0),  // Z-piece: 3 wide, spawn at 3 so center is at 4
+        "J" => (3, 0),  // J-piece: 3 wide, spawn at 3 so center is at 4
+        "L" => (3, 0),  // L-piece: 3 wide, spawn at 3 so center is at 4
+        _ => (3, 0),    // Default
     }
 }
 
@@ -658,6 +659,7 @@ fn calculate_input_commands(
     Ok(commands)
 }
 
+
 /// Get the best move and the input commands to execute it
 #[pyfunction]
 fn get_optimal_move_with_inputs(
@@ -697,6 +699,251 @@ fn test_spawn_position(piece: String) -> PyResult<bool> {
     Ok(false)
 }
 
+// Add to your lib.rs
+
+/// Get the width of a piece at a specific rotation
+fn get_piece_width(piece: &str, rotation: u8) -> i32 {
+    let shape = get_piece_shape(piece, rotation);
+    shape[0].len() as i32
+}
+
+/// Get the height of a piece at a specific rotation
+fn get_piece_height(piece: &str, rotation: u8) -> i32 {
+    get_piece_shape(piece, rotation).len() as i32
+}
+
+/// Get the adjusted spawn position accounting for piece width after rotation
+fn get_adjusted_spawn_position(piece: &str, rotation: u8) -> (i32, i32) {
+    let base_spawn = get_spawn_position(piece);
+    let piece_width = get_piece_width(piece, rotation);
+    
+    // Adjust x position to keep piece centered
+    let adjusted_x = match piece {
+        "I" => {
+            match rotation % 2 {
+                0 => 3,  // Horizontal I-piece (4 wide)
+                _ => 5,  // Vertical I-piece (1 wide)
+            }
+        },
+        "O" => 4,  // O-piece is always 2x2, same position
+        _ => {
+            // For other pieces, center them based on their rotated width
+            let center_x = 5; // Board center
+            center_x - (piece_width / 2)
+        }
+    };
+    
+    (adjusted_x, base_spawn.1)
+}
+
+/// Calculate positions accounting for rotation-dependent piece dimensions (FIXED)
+#[pyfunction]
+fn calculate_input_commands_fixed(
+    piece: &str,
+    target_move: &Move
+) -> PyResult<Vec<InputCommand>> {
+    let mut commands = Vec::new();
+    
+    // Always use the standard spawn position (don't change this)
+    let (spawn_x, _spawn_y) = get_spawn_position(piece);
+    
+    println!("Calculating inputs for {} from spawn x={} to target x={}, rotation={}", 
+             piece, spawn_x, target_move.x, target_move.rotation);
+    
+    // Step 1: Handle rotations first
+    let rotation = target_move.rotation % 4;
+    
+    if rotation == 2 {
+        commands.push(InputCommand::new("rotate_180".to_string(), 1));
+        println!("  Command: Rotate 180 degrees");
+    } else if rotation > 0 {
+        commands.push(InputCommand::new("rotate_cw".to_string(), rotation as i32));
+        println!("  Command: Rotate clockwise {} times", rotation);
+    }
+    
+    // Step 2: Calculate movement needed, accounting for rotation offset
+    let mut effective_spawn_x = spawn_x;
+    
+    // Adjust effective spawn position based on how rotation changes the piece position
+    if rotation > 0 {
+        effective_spawn_x = match piece {
+            "I" => {
+                match rotation % 2 {
+                    0 => spawn_x,      // Horizontal I-piece, no adjustment
+                    _ => spawn_x + 1,  // Vertical I-piece shifts right by 1
+                }
+            },
+            "O" => spawn_x,  // O-piece doesn't change position when rotated
+            "T" | "S" | "Z" | "J" | "L" => {
+                // These pieces might shift slightly when rotated
+                match rotation {
+                    1 => spawn_x,      // First rotation
+                    2 => spawn_x,      // 180 degrees
+                    3 => spawn_x,      // Third rotation
+                    _ => spawn_x,
+                }
+            },
+            _ => spawn_x,
+        };
+    }
+    
+    let moves_needed = target_move.x - effective_spawn_x;
+    
+    println!("  Effective spawn after rotation: {}, moves needed: {}", effective_spawn_x, moves_needed);
+    
+    if moves_needed > 0 {
+        commands.push(InputCommand::new("right".to_string(), moves_needed));
+        println!("  Command: Move right {} times", moves_needed);
+    } else if moves_needed < 0 {
+        commands.push(InputCommand::new("left".to_string(), -moves_needed));
+        println!("  Command: Move left {} times", -moves_needed);
+    }
+    
+    // Step 3: Drop the piece
+    commands.push(InputCommand::new("drop".to_string(), 1));
+    println!("  Command: Drop piece");
+    
+    Ok(commands)
+}
+
+/// Enhanced move calculation that considers piece dimensions at each rotation
+#[pyfunction]
+fn get_optimal_move_with_inputs_fixed(
+    piece: Option<String>,
+) -> PyResult<Option<(Move, Vec<InputCommand>)>> {
+    if let Some(piece_type) = piece {
+        // Calculate the best move
+        if let Some(best_move) = calculate_best_move_persistent(Some(piece_type.clone()))? {
+            // Calculate the input commands with rotation-aware positioning
+            let commands = calculate_input_commands_fixed(&piece_type, &best_move)?;
+            
+            println!("Optimal move calculated:");
+            println!("  Move: {} at x={}, rotation={}, score={:.1}", 
+                     best_move.piece, best_move.x, best_move.rotation, best_move.score);
+            println!("  Commands: {} steps", commands.len());
+            
+            return Ok(Some((best_move, commands)));
+        }
+    }
+    
+    Ok(None)
+}
+
+/// Simple debug to track position shifts during rotation
+#[pyfunction]
+fn debug_rotation_position_shift(piece: String, rotation: u8) -> PyResult<()> {
+    println!("=== ROTATION POSITION DEBUG ===");
+    println!("Piece: {}, Rotation: {}", piece, rotation);
+    
+    let (spawn_x, spawn_y) = get_spawn_position(&piece);
+    println!("Spawn position: x={}, y={}", spawn_x, spawn_y);
+    
+    // Test if piece can be placed at spawn with this rotation
+    unsafe {
+        if let Some(board) = &GAME_BOARD {
+            let can_place = board.is_valid_position(&piece, spawn_x, spawn_y, rotation);
+            println!("Can place at spawn with rotation {}: {}", rotation, can_place);
+            
+            // Try different x positions to see where it can actually be placed
+            for test_x in (spawn_x - 3)..(spawn_x + 4) {
+                if board.is_valid_position(&piece, test_x, spawn_y, rotation) {
+                    println!("  Can place at x={} with rotation {}", test_x, rotation);
+                }
+            }
+        }
+    }
+    println!("=== END DEBUG ===");
+    Ok(())
+}
+
+/// Calculate input commands with position correction for rotation
+#[pyfunction]
+fn calculate_input_commands_corrected(
+    piece: &str,
+    target_move: &Move
+) -> PyResult<Vec<InputCommand>> {
+    let mut commands = Vec::new();
+    
+    let (spawn_x, _spawn_y) = get_spawn_position(piece);
+    
+    println!("Calculating inputs for {} from spawn x={} to target x={}, rotation={}", 
+             piece, spawn_x, target_move.x, target_move.rotation);
+    
+    // Step 1: Handle rotations first
+    let rotation = target_move.rotation % 4;
+    
+    if rotation == 2 {
+        commands.push(InputCommand::new("rotate_180".to_string(), 1));
+        println!("  Command: Rotate 180 degrees");
+    } else if rotation > 0 {
+        commands.push(InputCommand::new("rotate_cw".to_string(), rotation as i32));
+        println!("  Command: Rotate clockwise {} times", rotation);
+    }
+    
+    // Step 2: Calculate the actual position the piece ends up at after rotation
+    let actual_x_after_rotation = get_actual_position_after_rotation(piece, spawn_x, rotation);
+    
+    // Step 3: Calculate movement needed from the actual position to target
+    let moves_needed = target_move.x - actual_x_after_rotation;
+    
+    println!("  After rotation, piece is at x={}, need to move {} to reach target x={}", 
+             actual_x_after_rotation, moves_needed, target_move.x);
+    
+    if moves_needed > 0 {
+        commands.push(InputCommand::new("right".to_string(), moves_needed));
+        println!("  Command: Move right {} times", moves_needed);
+    } else if moves_needed < 0 {
+        commands.push(InputCommand::new("left".to_string(), -moves_needed));
+        println!("  Command: Move left {} times", -moves_needed);
+    }
+    
+    commands.push(InputCommand::new("drop".to_string(), 1));
+    println!("  Command: Drop piece");
+    
+    Ok(commands)
+}
+
+/// Calculate where a piece actually ends up after rotation
+fn get_actual_position_after_rotation(piece: &str, spawn_x: i32, rotation: u8) -> i32 {
+    // This function needs to account for how your specific game handles rotation
+    // These values might need to be adjusted based on testing
+    
+    match piece {
+        "I" => {
+            match rotation % 2 {
+                0 => spawn_x,      // Horizontal I (4 wide)
+                _ => spawn_x + 1,  // Vertical I (1 wide) - often shifts right
+            }
+        },
+        "O" => spawn_x,  // O piece doesn't change position when rotated
+        "T" => {
+            match rotation % 4 {
+                0 => spawn_x,      // Original orientation
+                1 => spawn_x,      // Right turn - might shift
+                2 => spawn_x,      // Upside down
+                3 => spawn_x,      // Left turn - might shift
+                _ => spawn_x,
+            }
+        },
+        "S" | "Z" => {
+            match rotation % 2 {
+                0 => spawn_x,      // Horizontal
+                _ => spawn_x,      // Vertical - might shift
+            }
+        },
+        "J" | "L" => {
+            match rotation % 4 {
+                0 => spawn_x,      // Original
+                1 => spawn_x,      // Rotated
+                2 => spawn_x,      // Flipped
+                3 => spawn_x,      // Rotated other way
+                _ => spawn_x,
+            }
+        },
+        _ => spawn_x,
+    }
+}
+
 /// Python module definition
 #[pymodule]
 fn tetris_bot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -716,6 +963,16 @@ fn tetris_bot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(calculate_input_commands, m)?)?;
     m.add_function(wrap_pyfunction!(get_optimal_move_with_inputs, m)?)?;
     m.add_function(wrap_pyfunction!(test_spawn_position, m)?)?;
+    
+    // Add the fixed functions
+    m.add_function(wrap_pyfunction!(calculate_input_commands_fixed, m)?)?;
+    m.add_function(wrap_pyfunction!(get_optimal_move_with_inputs_fixed, m)?)?;
+    
+    // Add the debug function
+    m.add_function(wrap_pyfunction!(debug_rotation_position_shift, m)?)?;
+    
+    // Add the corrected input commands function
+    m.add_function(wrap_pyfunction!(calculate_input_commands_corrected, m)?)?;
     
     m.add_class::<TetrisBoard>()?;
     m.add_class::<Move>()?;
