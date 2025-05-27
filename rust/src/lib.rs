@@ -544,15 +544,112 @@ fn reset_game_board() -> PyResult<()> {
     Ok(())
 }
 
+// Add a new function to get the next piece from the queue
+#[pyfunction]
+fn get_next_piece_from_queue() -> PyResult<Option<String>> {
+    unsafe {
+        if let Some(board) = &mut GAME_BOARD {
+            if !board.next_pieces.is_empty() {
+                // Get the first piece from the queue and remove it
+                if let Some(Some(piece)) = board.next_pieces.get(0) {
+                    let next_piece = piece.clone();
+                    board.next_pieces.remove(0);
+                    return Ok(Some(next_piece));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+// Add function to check if we have pieces in queue
+#[pyfunction]
+fn has_pieces_in_queue() -> PyResult<bool> {
+    unsafe {
+        if let Some(board) = &GAME_BOARD {
+            return Ok(!board.next_pieces.is_empty());
+        }
+    }
+    Ok(false)
+}
+
+// Modify advance_piece_queue to include debug output
+#[pyfunction]
+fn advance_piece_queue() -> PyResult<Option<String>> {
+    unsafe {
+        if let Some(board) = &mut GAME_BOARD {
+            println!("--- ADVANCING QUEUE ---");
+            println!("Queue before advance: {:?}", board.next_pieces);
+            
+            if !board.next_pieces.is_empty() {
+                // Remove first piece from queue (this becomes current piece)
+                let current_piece = board.next_pieces.remove(0);
+                println!("Removed piece from queue: {:?}", current_piece);
+                println!("Queue after advance: {:?}", board.next_pieces);
+                println!("Queue length now: {}", board.next_pieces.len());
+                return Ok(current_piece);
+            } else {
+                println!("Queue is empty!");
+            }
+        }
+    }
+    Ok(None)
+}
+
+// Modify add_piece_to_queue to include debug output
+#[pyfunction]
+fn add_piece_to_queue(piece: Option<String>) -> PyResult<()> {
+    unsafe {
+        if let Some(board) = &mut GAME_BOARD {
+            println!("--- ADDING TO QUEUE ---");
+            println!("Adding piece: {:?}", piece);
+            println!("Queue before add: {:?}", board.next_pieces);
+            
+            board.next_pieces.push(piece);
+            
+            println!("Queue after add: {:?}", board.next_pieces);
+            println!("Queue length now: {}", board.next_pieces.len());
+        }
+    }
+    Ok(())
+}
+
+// Add debug function to print current game state
+#[pyfunction]
+fn print_game_state() -> PyResult<()> {
+    unsafe {
+        if let Some(board) = &GAME_BOARD {
+            println!("=== GAME STATE DEBUG ===");
+            println!("Current piece: {:?}", board.current_piece);
+            println!("Held piece: {:?}", board.held_piece);
+            println!("Queue length: {}", board.next_pieces.len());
+            println!("Queue contents:");
+            for (i, piece) in board.next_pieces.iter().enumerate() {
+                println!("  [{}]: {:?}", i, piece);
+            }
+            println!("========================");
+        } else {
+            println!("No game board initialized!");
+        }
+    }
+    Ok(())
+}
+
+// Update the module to include new functions
 #[pymodule]
 fn tetris_bot_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(initialize_game_board, m)?)?;
     m.add_function(wrap_pyfunction!(update_game_pieces, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_best_move_persistent, m)?)?;
     m.add_function(wrap_pyfunction!(get_optimal_move_with_inputs, m)?)?;
-    m.add_function(wrap_pyfunction!(get_optimal_move_with_inputs_debug, m)?)?;  // Add debug version
+    m.add_function(wrap_pyfunction!(get_optimal_move_with_inputs_debug, m)?)?;
     m.add_function(wrap_pyfunction!(execute_move_on_board, m)?)?;
     m.add_function(wrap_pyfunction!(reset_game_board, m)?)?;
+    m.add_function(wrap_pyfunction!(get_next_piece_from_queue, m)?)?;
+    m.add_function(wrap_pyfunction!(has_pieces_in_queue, m)?)?;
+    m.add_function(wrap_pyfunction!(advance_piece_queue, m)?)?;
+    m.add_function(wrap_pyfunction!(add_piece_to_queue, m)?)?;
+    m.add_function(wrap_pyfunction!(print_game_state, m)?)?;              // Add this
     
     m.add_class::<TetrisBoard>()?;
     m.add_class::<Move>()?;

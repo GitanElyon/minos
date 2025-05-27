@@ -223,8 +223,40 @@ def get_game_pieces_ultra_optimized(search_area, template_path, piece_pixel_offs
     
     return current_piece, next_pieces
 
+def scan_single_piece(template_path, search_area, piece_pixel_offset):
+    """Scan just one piece position"""
+    next_coords = find_next_optimized(search_area, template_path, threshold=0.7)
+    
+    if not next_coords:
+        return None
+    
+    text_x, text_y, text_width, text_height = next_coords
+    
+    # Calculate pixel position for the piece
+    pixel_x = text_x + piece_pixel_offset[0]
+    pixel_y = text_y + text_height + piece_pixel_offset[1]
+    
+    # Take screenshot of just this one pixel
+    screenshot = ImageGrab.grab(bbox=(pixel_x, pixel_y, pixel_x + 1, pixel_y + 1))
+    
+    # Color definitions
+    tetris_colors = {
+        'I': (49, 178, 130),
+        'O': (179, 153, 49),
+        'T': (207, 60, 193),
+        'S': (131, 179, 50),
+        'Z': (179, 52, 59),
+        'J': (78, 61, 164),
+        'L': (180, 99, 50)
+    }
+    
+    color = screenshot.getpixel((0, 0))
+    piece = identify_piece_by_color_fast(color, tetris_colors)
+    
+    return piece
+
 def main_game_loop():
-    """Main game loop"""
+    """Main game loop with optimized piece tracking"""
     # Configuration
     SEARCH_AREA = (0, 0, 1920, 1080)
     TEMPLATE_PATH = "assets/next_template.png"
@@ -233,6 +265,9 @@ def main_game_loop():
     PIECE_PIXEL_OFFSETS = [
         (104, 60), (104, 165), (104, 270), (104, 375), (104, 480)
     ]
+    
+    # Last piece in queue (5th position) - this is what we'll scan each turn
+    LAST_QUEUE_POSITION = PIECE_PIXEL_OFFSETS[4]  # (104, 480)
     
     if not USE_RUST:
         print("Rust module not available - cannot run game loop")
@@ -246,28 +281,37 @@ def main_game_loop():
     time.sleep(3)
     
     try:
-        next_coords = find_next_optimized(SEARCH_AREA, TEMPLATE_PATH, threshold=0.7)
+        # INITIAL SCAN: Get current piece + full queue
+        print("Scanning initial pieces...")
+        current_piece, next_pieces = get_game_pieces_ultra_optimized(
+            SEARCH_AREA, TEMPLATE_PATH, PIECE_PIXEL_OFFSETS, CURRENT_PIECE_OFFSET
+        )
         
-        if not next_coords:
-            print("Could not find 'next' text!")
+        if not current_piece or not next_pieces:
+            print("Could not detect initial pieces!")
             return
+        
+        print(f"Initial current piece: {current_piece}")
+        print(f"Initial queue: {next_pieces}")
+        
+        # Initialize the game board with all detected pieces
+        tetris_bot_rust.update_game_pieces(current_piece, None, next_pieces)
+        
+        # Print initial state
+        tetris_bot_rust.print_game_state()
         
         print("Starting game loop...")
         moves_executed = 0
+        current_playing_piece = current_piece
         
         while True:
             try:
-                # Detect pieces
-                current_piece, next_pieces = get_game_pieces_ultra_optimized(
-                    SEARCH_AREA, TEMPLATE_PATH, PIECE_PIXEL_OFFSETS, CURRENT_PIECE_OFFSET
-                )
-                
-                if current_piece:
-                    # Update game state
-                    tetris_bot_rust.update_game_pieces(current_piece, None, next_pieces)
+                if current_playing_piece:
+                    print(f"\n=== MOVE {moves_executed + 1} ===")
+                    print(f"Playing piece: {current_playing_piece}")
                     
-                    # Get optimal move - use the standard function name
-                    result = tetris_bot_rust.get_optimal_move_with_inputs_debug(current_piece)
+                    # Get optimal move
+                    result = tetris_bot_rust.get_optimal_move_with_inputs_debug(current_playing_piece)
                     
                     if result:
                         best_move, commands = result
@@ -276,7 +320,30 @@ def main_game_loop():
                         if controller.execute_commands(commands):
                             tetris_bot_rust.execute_move_on_board(best_move)
                             moves_executed += 1
+                            
+                            # ADVANCE QUEUE: Get next piece from queue
+                            current_playing_piece = tetris_bot_rust.advance_piece_queue()
+                            
+                            # SCAN NEW PIECE: Only scan the last queue position
+                            print("Scanning for new queue piece...")
+                            new_piece = scan_single_piece(
+                                TEMPLATE_PATH, SEARCH_AREA, LAST_QUEUE_POSITION
+                            )
+                            
+                            if new_piece:
+                                tetris_bot_rust.add_piece_to_queue(new_piece)
+                                print(f"Added new piece to queue: {new_piece}")
+                            else:
+                                print("Warning: Could not detect new piece for queue")
+                                tetris_bot_rust.add_piece_to_queue(None)  # Add None to maintain queue length
+                            
+                            # Print state after all operations
+                            tetris_bot_rust.print_game_state()
+                            
                             time.sleep(0.5)
+                else:
+                    print("No current piece available!")
+                    break
                 
                 time.sleep(0.1)
                 
