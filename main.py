@@ -266,8 +266,8 @@ def main_game_loop():
                     # Update game state
                     tetris_bot_rust.update_game_pieces(current_piece, None, next_pieces)
                     
-                    # Get optimal move with fixed positioning
-                    result = tetris_bot_rust.get_optimal_move_with_inputs_fixed(current_piece)
+                    # Get optimal move - use the standard function name
+                    result = tetris_bot_rust.get_optimal_move_with_inputs_debug(current_piece)
                     
                     if result:
                         best_move, commands = result
