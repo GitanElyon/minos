@@ -1,17 +1,166 @@
-import pyautogui
-from PIL import ImageGrab, Image
 import time
+from PIL import ImageGrab, Image
 import cv2
 import numpy as np
+import keyboard
 
 # Add this import at the top after building the Rust module
 try:
     import tetris_bot_rust
     USE_RUST = True
-    print("Rust module available, using Rust implementation for piece identification")
+    print("Rust module available, using Rust implementation")
 except ImportError:
     USE_RUST = False
     print("Rust module not available, using Python implementation")
+
+class TetrisController:
+    def __init__(self):
+        # Define key mappings - testing with k and ; for rotation
+        self.keys = {
+            'left': 'a',
+            'right': 'd', 
+            'rotate_cw': 'k',           # Changed from 'left' to 'k'
+            'rotate_ccw': ';',          # Changed from 'right' to ';'
+            'rotate_180': 'o',          # Changed from 'up' to 'o'
+            'soft_drop': 's',
+            'hard_drop': 'space',
+            'hold': 'w',
+        }
+        
+        # Timing settings - reduced for faster gameplay
+        self.move_delay = 0.04       # Reduced from 0.08
+        self.rotation_delay = 0.08   # Reduced from 0.15
+        self.drop_delay = 0.15       # Reduced from 0.3
+        
+    def execute_move(self, move):
+        """Execute a move returned by the Rust AI"""
+        if not move:
+            return False
+            
+        try:
+            print(f"Executing move for {move.piece}: x={move.x}, rotation={move.rotation}")
+            
+            # Handle rotations
+            if move.rotation > 0:
+                for i in range(int(move.rotation)):
+                    keyboard.press(self.keys['rotate_cw'])
+                    keyboard.release(self.keys['rotate_cw'])
+                    time.sleep(self.rotation_delay)
+            
+            # Handle horizontal movement
+            current_x = 4  # Assume starting position
+            moves_needed = int(move.x) - current_x
+            
+            if moves_needed != 0:
+                direction = 'right' if moves_needed > 0 else 'left'
+                for i in range(abs(moves_needed)):
+                    keyboard.press_and_release(self.keys[direction])
+                    time.sleep(self.move_delay)
+            
+            # Drop the piece
+            keyboard.press_and_release(self.keys['hard_drop'])
+            time.sleep(self.drop_delay)
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error executing move: {e}")
+            return False
+    
+    def hold_piece(self):
+        """Hold the current piece"""
+        try:
+            keyboard.press_and_release(self.keys['hold'])
+            time.sleep(self.drop_delay)
+            return True
+        except Exception as e:
+            print(f"Error holding piece: {e}")
+            return False
+
+    def test_rotation_keys(self):
+        """Test rotation keys using k, ;, and o bindings"""
+        print("Testing rotation keys with k, ;, and o bindings...")
+        
+        print("Testing k - clockwise rotation:")
+        keyboard.press_and_release('k')
+        time.sleep(1.5)
+        
+        print("Testing ; - counter-clockwise rotation:")
+        keyboard.press_and_release(';')
+        time.sleep(1.5)
+        
+        print("Testing o - 180-degree flip:")
+        keyboard.press_and_release('o')
+        time.sleep(1.5)
+        
+        print("Rotation key test complete")
+        
+    def execute_commands(self, commands):
+        """Execute a list of input commands from Rust"""
+        if not commands:
+            return False
+            
+        try:
+            print(f"Executing {len(commands)} commands:")
+            
+            for i, command in enumerate(commands):
+                print(f"  Command {i+1}: {command.action} x{command.count}")
+                
+                # Map Rust command names to Python key names
+                action_map = {
+                    'left': 'left',
+                    'right': 'right',
+                    'rotate_cw': 'rotate_cw',
+                    'rotate_ccw': 'rotate_ccw',
+                    'rotate_180': 'rotate_180',
+                    'drop': 'hard_drop',
+                    'hold': 'hold'
+                }
+                
+                if command.action in action_map:
+                    key_name = action_map[command.action]
+                    key = self.keys[key_name]
+                    
+                    for j in range(command.count):
+                        print(f"    Pressing key: {key} ({j+1}/{command.count})")
+                        keyboard.press_and_release(key)
+                        
+                        # Use appropriate delay based on action type
+                        if command.action in ['rotate_cw', 'rotate_ccw', 'rotate_180']:
+                            time.sleep(self.rotation_delay)
+                        elif command.action in ['left', 'right']:
+                            time.sleep(self.move_delay)
+                        elif command.action == 'drop':
+                            time.sleep(self.drop_delay)
+                else:
+                    print(f"    Unknown action: {command.action}")
+            
+            print("  All commands executed!")
+            return True
+            
+        except Exception as e:
+            print(f"  Error executing commands: {e}")
+            return False
+
+    def debug_single_rotation(self):
+        """Debug a single rotation to see what happens"""
+        print("Debug: Testing single clockwise rotation...")
+        
+        try:
+            # Method 2: Key name (this worked)
+            print("Method 2: 'left' key name")
+            keyboard.press_and_release('k')
+            time.sleep(2)
+            
+            # Method 3: Explicit press/release (this worked)
+            print("Method 3: Explicit press/release")
+            keyboard.press('k')
+            time.sleep(0.1)
+            keyboard.release('k')
+            time.sleep(2)
+            
+        except Exception as e:
+            print(f"Error in debug rotation: {e}")
 
 def find_next_by_template_matching(search_area, template_path, threshold=0.8):
     """Find the "next" text using template matching"""
@@ -72,7 +221,7 @@ def find_next_optimized(search_area, template_path, threshold=0.7):
         return None
 
 def identify_piece_by_color_fast(pixel_color, tetris_colors):
-    """Fast piece identification (Python only)"""
+    """Fast piece identification"""
     if hasattr(pixel_color[0], 'item'):
         pixel_color = tuple(int(c.item()) for c in pixel_color)
     else:
@@ -93,7 +242,6 @@ def identify_piece_by_color_fast(pixel_color, tetris_colors):
 def get_game_pieces_ultra_optimized(search_area, template_path, piece_pixel_offsets, current_piece_offset):
     """Ultra-optimized: single screenshot for all piece detection"""
     
-    # Find "next" text coordinates
     next_coords = find_next_optimized(search_area, template_path, threshold=0.7)
     
     if not next_coords:
@@ -151,7 +299,8 @@ def get_game_pieces_ultra_optimized(search_area, template_path, piece_pixel_offs
     
     return current_piece, next_pieces
 
-if __name__ == "__main__":
+def main_game_loop():
+    """Simplified main game loop - Rust does all the thinking"""
     # Configuration
     SEARCH_AREA = (0, 0, 1920, 1080)
     TEMPLATE_PATH = "assets/next_template.png"
@@ -159,42 +308,134 @@ if __name__ == "__main__":
     
     PIECE_PIXEL_OFFSETS = [
         (104, 60), (104, 165), (104, 270), (104, 375), (104, 480)
-    ]   
+    ]
     
-    print("=== TETRIS BOT - WITH RUST GAME LOGIC ===")
+    if not USE_RUST:
+        print("Rust module not available - cannot run game loop")
+        return
     
-    # Detect pieces (Python)
-    current_piece, next_pieces = get_game_pieces_ultra_optimized(
-        SEARCH_AREA, TEMPLATE_PATH, PIECE_PIXEL_OFFSETS, CURRENT_PIECE_OFFSET
-    )
+    # Initialize components
+    controller = TetrisController()
     
-    print(f"\n  Detection results:")
-    print(f"  Current piece: {current_piece if current_piece else 'Not detected'}")
-    print(f"  Next pieces:")
-    for i, piece in enumerate(next_pieces[:5], 1):
-        print(f"    {i}: {piece if piece else 'Not detected'}")
+    # Initialize persistent board state in Rust
+    tetris_bot_rust.initialize_game_board()
     
-    # Send to Rust for game logic
-    if USE_RUST:
-        try:
-            # Calculate best move using Rust
-            best_move = tetris_bot_rust.calculate_best_move(
-                current_piece, 
-                next_pieces, 
-                None  # board_state - we'll add this later
-            )
-            
-            # Get strategy analysis
-            strategy = tetris_bot_rust.analyze_game_state(current_piece, next_pieces)
-            
-            print(f"\n Rust game logic:")
-            print(f"  Best move: {best_move}")
-            print(f"  Strategy analysis:")
-            for line in strategy:
-                print(f"    {line}")
+    print("TETRIS BOT ACTIVE - Starting in 3 seconds...")
+    time.sleep(3)
+    
+    try:
+        next_coords = find_next_optimized(SEARCH_AREA, TEMPLATE_PATH, threshold=0.7)
+        
+        if not next_coords:
+            print("Could not find 'next' text!")
+            return
+        
+        print("Starting game loop...")
+        moves_executed = 0
+        
+        while True:
+            try:
+                # 1. Detect pieces (Python)
+                current_piece, next_pieces = get_game_pieces_ultra_optimized(
+                    SEARCH_AREA, TEMPLATE_PATH, PIECE_PIXEL_OFFSETS, CURRENT_PIECE_OFFSET
+                )
                 
-        except Exception as e:
-            print(f"  Error calling Rust: {e}")
+                if current_piece:
+                    print(f"\nMove #{moves_executed + 1}: Detected {current_piece}")
+                    
+                    # 2. Update game state (Rust)
+                    tetris_bot_rust.update_game_pieces(current_piece, None, next_pieces)
+                    
+                    # 3. Get optimal move and input commands (Rust)
+                    result = tetris_bot_rust.get_optimal_move_with_inputs(current_piece)
+                    
+                    if result:
+                        best_move, commands = result
+                        print(f"AI Decision: x={best_move.x}, rot={best_move.rotation}, score={best_move.score:.1f}")
+                        
+                        # 4. Execute commands (Python)
+                        if controller.execute_commands(commands):
+                            # 5. Update virtual board state (Rust)
+                            tetris_bot_rust.execute_move_on_board(best_move)
+                            moves_executed += 1
+                            time.sleep(0.5)  # Reduced from 1.0 - faster between pieces
+                    else:
+                        print("No valid move found!")
+                else:
+                    print("Waiting for piece detection...")
+                
+                time.sleep(0.1)  # Reduced from 0.2 - faster detection loop
+                
+            except KeyboardInterrupt:
+                print(f"\nStopping bot... Total moves executed: {moves_executed}")
+                break
+            except Exception as e:
+                print(f"Error in game loop: {e}")
+                time.sleep(1)
+        
+    except Exception as e:
+        print(f"Fatal error: {e}")
+
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "test_rotation":
+        # Test rotation keys specifically
+        controller = TetrisController()
+        controller.test_rotation_keys()
+        
+    elif len(sys.argv) > 1 and sys.argv[1] == "debug_rotation":
+        # Debug single rotation with multiple methods
+        controller = TetrisController()
+        controller.debug_single_rotation()
+        
+    elif len(sys.argv) > 1 and sys.argv[1] == "play":
+        main_game_loop()
+        
     else:
-        print("\n  Python fallback:")
-        print(f"  Would calculate move for: {current_piece}")
+        # Normal detection test
+        print("=== TETRIS BOT - DETECTION TEST ===")
+        print("Run with:")
+        print("  'python main.py test_rotation' - test rotation keys")
+        print("  'python main.py debug_rotation' - debug rotation methods")
+        print("  'python main.py play' - start playing")
+        
+        SEARCH_AREA = (0, 0, 1920, 1080)
+        TEMPLATE_PATH = "assets/next_template.png"
+        CURRENT_PIECE_OFFSET = (-225, -60)
+        
+        PIECE_PIXEL_OFFSETS = [
+            (104, 60), (104, 165), (104, 270), (104, 375), (104, 480)
+        ]   
+        
+        # Create Tetris board
+        if USE_RUST:
+            board = tetris_bot_rust.create_board()
+            print("Rust Tetris engine initialized")
+        
+        # Detect pieces
+        current_piece, next_pieces = get_game_pieces_ultra_optimized(
+            SEARCH_AREA, TEMPLATE_PATH, PIECE_PIXEL_OFFSETS, CURRENT_PIECE_OFFSET
+        )
+        
+        print(f"\nDetection results:")
+        print(f"  Current piece: {current_piece if current_piece else 'Not detected'}")
+        print(f"  Next pieces:")
+        for i, piece in enumerate(next_pieces[:5], 1):
+            print(f"    {i}: {piece if piece else 'Not detected'}")
+        
+        # Calculate move
+        if USE_RUST and current_piece:
+            try:
+                board.update_pieces(current_piece, None, next_pieces)
+                best_move = tetris_bot_rust.calculate_best_move(board, current_piece)
+                
+                if best_move:
+                    print(f"\nRust AI Decision:")
+                    print(f"  Best move: Place {best_move.piece} at x={best_move.x}, rotation={best_move.rotation}")
+                    print(f"  Score: {best_move.score:.1f}")
+                else:
+                    print("  No valid move found!")
+                    
+            except Exception as e:
+                print(f"  Error with Rust engine: {e}")
